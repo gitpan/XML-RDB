@@ -1,0 +1,65 @@
+--	address-book -> entry
+CREATE TABLE gen_address_book (
+  gen_name_id integer NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE gen_street (
+  gen_street_value varchar(50) NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE dbix_sequence_state (
+  dataset varchar(50) NULL  ,
+  state_id integer NULL  
+);
+
+CREATE TABLE gen_entry (
+  gen_address_book_fk integer NOT NULL  ,
+  gen_name_id integer NULL  ,
+  gen_state_id integer NULL  ,
+  gen_street_id integer NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE gen_link_tables (
+  one_table varchar(50) NOT NULL  ,
+  many_table varchar(50) NOT NULL  
+);
+
+CREATE TABLE gen_element_names (
+  db_name varchar(50) NOT NULL  ,
+  xml_name varchar(50) NOT NULL  
+);
+
+CREATE TABLE gen_name (
+  gen_name_type_attribute varchar(50) NULL  ,
+  gen_name_value varchar(50) NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE dbix_sequence_release (
+  dataset varchar(50) NULL  ,
+  released_id integer NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE gen_state (
+  gen_state_value varchar(50) NULL  ,
+  id integer NOT NULL  ,
+  PRIMARY KEY (id)
+);
+
+
+INSERT INTO gen_element_names VALUES ('gen_street','street');
+INSERT INTO gen_element_names VALUES ('gen_address_book','address-book');
+INSERT INTO gen_element_names VALUES ('gen_name_type_attribute','type');
+INSERT INTO gen_element_names VALUES ('gen_entry','entry');
+INSERT INTO gen_element_names VALUES ('gen_name','name');
+INSERT INTO gen_element_names VALUES ('gen_state','state');
+INSERT INTO gen_link_tables VALUES ('gen_address_book','entry');

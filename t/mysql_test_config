@@ -1,0 +1,4 @@
+DSN=DBI:mysql:test
+USERNAME=
+PASSWORD=
+
