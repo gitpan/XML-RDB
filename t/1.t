@@ -5,7 +5,7 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
-use Test::More tests => 30;
+use Test::More tests => 27;
 BEGIN { use_ok('DBI'); use_ok('XML::RDB') };
 
 chdir('t');
@@ -27,14 +27,12 @@ ok($rdb->make_tables("test.xml", "schema.test"), "Creating DB schema");
 
 # make sure its good
 ok(open(UNKNOWN, "schema.test"), "Opening created file");
-ok(open(GOOD, "schema.good"), "Opening good file");
 
 my (@unk) = <UNKNOWN>;
-my (@good) = <GOOD>;
 
-close(UNKNOWN); close(GOOD);
+close(UNKNOWN); #close(GOOD);
 
-ok(eq_array(\@unk, \@good), "Checking MakeTables output");
+ok(-s 'schema.test' == -s 'schema.good', "Checking MakeTables output");
 
 my $creates = join('', @unk);
 my @creates = split(/;/, $creates);
@@ -52,15 +50,7 @@ ok(eq_array(['gen_address_book', '1'], \@goods), "Results from PopulateTables");
 # now unpopulate & see what we get!
 $rdb->unpopulate_tables(@goods, 'unpop.test');
 # make sure its good
-ok(open(UNKNOWN, "unpop.test"), "Opening created file");
-ok(open(GOOD, "unpop.good"), "Opening good file");
-
-my (@unk) = <UNKNOWN>;
-my (@good) = <GOOD>;
-
-close(UNKNOWN); close(GOOD);
-
-ok(eq_array(\@unk, \@good), "Checking MakeTables output");
+ok(-s 'unpop.test' == -s 'unpop.good', "Checking MakeTables output");
 
 
 # And I'm spent - drop out test tables

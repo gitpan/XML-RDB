@@ -1,6 +1,6 @@
 #####
 #
-# $Id: common.pm,v 1.8 2001/09/19 05:44:37 trostler Exp $
+# $Id: RDB.pm,v 1.1 2003/04/18 00:33:17 trostler Exp $
 #
 # COPYRIGHT AND LICENSE
 # Copyright (c) 2001, 2003, Juniper Networks, Inc.  All rights reserved.
@@ -50,7 +50,7 @@ use IO::File;
 # 
 #####
 
-$VERSION = '1.0';
+$VERSION = '1.1';
 
 # All tables names will being with this string
 use constant TABLE_PREFIX => 'gen';

@@ -1,9 +1,9 @@
 ###
 #
-# $Id: pop_tables.pl,v 1.8 2001/07/28 00:03:39 trostler Exp $
+# $Id: PopulateTables.pm,v 1.2 2003/04/19 04:17:48 trostler Exp $
 #
 # COPYRIGHT AND LICENSE
-# Copyright (c) 2001, Juniper Networks, Inc.  
+# Copyright (c) 2001, 2003, Juniper Networks, Inc.  
 # All rights reserved.
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -33,6 +33,8 @@
 ###
 
 package XML::RDB::PopulateTables;
+use vars qw($VERSION);
+$VERSION = '1.0';
 
 ###
 #

@@ -1,9 +1,9 @@
 #####
 #
-# $Id: make_tables.pl,v 1.12 2001/09/19 05:44:37 trostler Exp $
+# $Id: MakeTables.pm,v 1.2 2003/04/19 04:17:48 trostler Exp $
 #
 # COPYRIGHT AND LICENSE
-# Copyright (c) 2001, Juniper Networks, Inc.
+# Copyright (c) 2001, 2003, Juniper Networks, Inc.
 # All rights reserved.
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -33,6 +33,8 @@
 #####
 
 package XML::RDB::MakeTables;
+use vars qw($VERSION);
+$VERSION = '1.0';
 
 #####
 #

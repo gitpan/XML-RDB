@@ -1,9 +1,9 @@
 #####
 #
-# $Id: unpop_schema.pl,v 1.3 2001/08/02 22:23:46 trostler Exp $
+# $Id: UnpopulateSchema.pm,v 1.2 2003/04/19 04:17:48 trostler Exp $
 #
 # COPYRIGHT AND LICENSE
-# Copyright (c) 2001, Juniper Networks, Inc.  
+# Copyright (c) 2001, 2003, Juniper Networks, Inc.  
 # All rights reserved.
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -33,6 +33,8 @@
 #####
 
 package XML::RDB::UnpopulateSchema;
+use vars qw($VERSION);
+$VERSION = '1.0';
 
 #####
 #
