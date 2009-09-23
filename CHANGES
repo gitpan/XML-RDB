@@ -1,0 +1,21 @@
+Revision history for Perl extension XML::RDB.
+
+Tue Sep 22 10:36:30 CDT 2009
+  API adds: create_tables, drop_tables, done
+  Added root_n_pk table holding root table and key parameters, changing the API
+  Added SQLite support.
+  Added DBIx, DBI debug vars to config. 
+  Added use strict.
+  Added done <- DESTROY, disconnects DB & XML::DOM::Parser->dispose
+  Added Undef’d unused DBIx globs, the ones found.
+  Added select generation in output DDL
+  Moved XML::DOM::Parser and DB handles, utilizing one for each object from RDB.pm.
+  should see double in speed and better memory usage.
+  Tested with Perl 5.10, Postgreql 8.3, SQLite 3.6.16, and MySQL 5.0.51a. 
+  Fixed the config vars.
+  Added most build info files
+
+0.01  Mon Apr 14 16:04:17 2003
+  - original version; created by h2xs 1.22 with options
+  -AX -n XML::RDB --skip-exporter --skip-autoloader
+

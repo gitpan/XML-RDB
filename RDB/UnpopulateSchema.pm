@@ -75,6 +75,7 @@ sub new {
   }, $class;
 
   $self->{top_table} = $self->msn('schema');
+  print $self->{top_table}, "  $pkey\n";
 
   $self;
 }
@@ -87,6 +88,15 @@ sub go {
                                   $self->{pkey},
                                   $self->{nodes});
 
+ 
+
+#  if ((  $self->{nodes}->{$self->msn('element')} ) &&
+#      ( !$self->{nodes}->{$self->{top_table}}->{$self->msn('element')})) {
+#
+#      $self->{nodes}->{$self->{top_table}}->{$self->msn('element')} = 
+#               $self->{nodes}->{$self->msn('element')};
+#  }
+ 
   # Dump 'er!
   $self->dump_schema_node($self->{nodes}->{$self->{top_table}}{'0'} 
                                    || $self->{nodes}->{$self->{top_table}}, 0);
@@ -96,11 +106,13 @@ sub go {
 # Now we've got the in-memory data structure - output it the XML
 ##
 sub dump_schema_node {
-    my($self, $head, $tab) = @_;
-
+    my($self, $head, $tab, $nodes) = @_;
     # Get element or group for convenience
+    
     my $element = $head->{$self->msn('element')} 
-                              || $head->{$self->msn('group')};
+            || $head->{$self->msn('group')};
+
+print Dumper($self->{nodes});
 
     $self->dump_element($head, $element, $tab);
 }
@@ -111,9 +123,10 @@ sub dump_element
     my($self, $head, $element, $tab, $attribute_to_add) = @_;
 
     my $fh = $self->{fh};
-
     my $max = defined $element->{'attribute'}{$self->ma('maxoccurs')} ||
         defined $element->{'attribute'}{$self->mg('maxoccurs')};
+
+print $max, "<---- maxoccurs\n";
 
     # 1:N relationship if $max
     for (0..$max) {
@@ -122,12 +135,12 @@ sub dump_element
 
         # Element name
         my $real_name = $element->{'attribute'}{$self->ma('name')};
-
         if (!$real_name) {
             # Must be a reference - either element or group
             $real_name = $element->{'attribute'}{$self->ma('ref')} ||
                 $element->{'attribute'}{$self->mg('ref')};
 
+print $real_name, "<--- realname\n";
             if ($real_name =~ /:/)
             {
                 die "Namespaces not yet supported: $real_name\n";
@@ -295,7 +308,7 @@ sub dump_type {
                 # Now dump the extension
                 $self->dump_sequence($base, $tab, 1);
             }
-            elsif (my $base = $complex_content->{$self->msn('restriction')}) {
+            elsif ( $base = $complex_content->{$self->msn('restriction')}) {
                 # A restriction?
                 my $base_name = 
                   $base->{'attribute'}{$self->aa('restriction_base')};
@@ -445,6 +458,7 @@ sub msn
     # $val -> PRE_xsd_$val
     #TABLE_PREFIX."_xsd_".shift;
     $self->{rdb}->{TABLE_PREFIX} . "_" . shift;
+#    $self->{rdb}->{TABLE_PREFIX} . "_xs_" . shift;
 } 
 
 # Add Attribute
@@ -460,6 +474,7 @@ sub ma
     my $self = shift;
     # $val -> PRE_element_$val_attribute
     $self->aa("element_" . shift);
+ #   $self->aa($self->msn("element_") . shift);
 }
 
 # Make Group
@@ -475,7 +490,8 @@ sub simple_type
     my($self, $type) = @_;
 
     $type =~ s/xsd://;
-
+    $type =~ s/xs://;
+	print $type .' ';
     $self->{simple_types}->{$type};
 }
 

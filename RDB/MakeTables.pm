@@ -49,13 +49,14 @@ $VERSION = '1.0';
 use strict;
 
 # We use DOM to parse the entire XML doc into memory
-use XML::DOM;
+# use XML::DOM;  XML::RDB loads it
 
 # For generic schema def
 use DBIx::DBSchema;
 
 sub new {
-  my ($class, $rdb, $xmlfile, $outfile) = @_;
+#  my ($class, $rdb, $xmlfile, $outfile) = @_;
+  my ($class, $rdb, $doc, $head, $outfile) = @_;
 
   # set up FH
   my $fh = new IO::File;
@@ -65,8 +66,8 @@ sub new {
     $fh->fdopen(fileno(STDOUT), 'w') || die "$!";
   }
 
-  my $doc = new XML::DOM::Parser->parsefile($xmlfile) || die "$!";
-  my $head = $doc->getDocumentElement;
+#  my $doc = new XML::DOM::Parser->parsefile($xmlfile) || die "$!";
+#  my $head = $doc->getDocumentElement;
     my $self = bless { 
       rdb => $rdb,
       doc => $doc,
@@ -76,26 +77,108 @@ sub new {
       fh => $fh,
                   }, $class;
 
+  my @t = localtime();
+  my $datetime = sprintf("%4d-%02d-%02d %02d:%02d:%02d", 
+                 $t[5] +1900,$t[4] +1,$t[3],$t[2],$t[1],$t[0]);
+
+  $self->p( <<"HEADER"
+-- DSN : $self->{rdb}->{DSN}
+--
+-- XML::RDB SQL Generation 
+-- XML file :  $self->{rdb}->{_XMLFILE}
+-- SQL file :  $outfile
+--     date :  $datetime
+-- 
+-- TABLE_PREFIX : $self->{rdb}->{TABLE_PREFIX}
+--      PK_NAME : $self->{rdb}->{PK_NAME}
+--      FK_NAME : $self->{rdb}->{FK_NAME}
+--   TEXT_WIDTH : $self->{rdb}->{TEXT_WIDTH}
+ 
+-------   ONE  to  MANY ------
+------------------------------
+HEADER
+);
+
   # This will print out those relationships (preceded by a '--'!)
   #   so we can check 'em out
   $self->p(XML::RDB::dump_otn($self->{one_to_n}, '--'));
+
+  $self->p( "\n" .'-- Gerated Tables'. "\n"
+                 .'---------------------------------'. "\n");
   $self;
 }
-  
+
 sub go {
   my($self) = @_;
 
   # Create the table defs in memory
   $self->make_tables($self->{head});
   $self->add_in_1_to_n_cols;
-
   # Create DB-generic sequence tables for DBIx::Sequence
   $self->make_sequence_tables;
-
+  # XML root and primary key, used in unpopulating this table set.
+  $self->make_root_n_pk_table;
   # Dump them
   $self->dump_dbschema_tables;
-
+  # Select statemetents for viewing data
+  $self->dump_select_statements;
   $self->{fh}->close;
+}
+
+
+sub dump_select_statements {
+  my $self = shift;
+  my $buff;
+  my @one2one;
+  my $PK = $self->{rdb}->{PK_NAME};
+  my $FK = $self->{rdb}->{FK_NAME};
+  my $meta = \%{$self->{tables}{__meta__}};
+
+  $self->p( "\n" .'-- Flattened views of related tables'. "\n"
+                 .'------------------------------------'. "\n");
+  foreach my $one (map { $self->{rdb}->mtn($_) } 
+                      (sort(keys(%{$self->{one_to_n}})))) {
+    # select columns
+    $buff  = "-- SELECT \n";
+    my @ns = (map {$self->{rdb}->mtn($_) } 
+                  (sort(keys(%{$self->{one_to_n}{$meta->{$one}}}))));
+    foreach my $t ($one, @ns) {
+      map { $buff .= "--   $t.$_ ,\n" } 
+          grep (!/^($PK|\w+_$FK|\w+_$PK)$/,
+               (sort(keys(%{$self->{tables}{$t}{cols}}))));
+      @one2one = (@one2one, (map {["$t.$_", ($_ =~ /(\w+)_$PK/)]}
+          grep (/^\w+_$PK$/,
+               (sort(keys(%{$self->{tables}{$t}{cols}}))))));
+    }
+
+    foreach my $t (@one2one) {
+      map { $buff .= '--   '. $t->[1] .".$_ ,\n" } 
+          grep (!/^($PK|\w+_$FK|\w+_$PK)$/,
+               (sort(keys(%{$self->{tables}{$t->[1]}{cols}}))));
+    }
+    $buff =~ s/,$//;
+
+    # from
+    my $tables = "-- FROM \n--   ". ('(' x  (scalar(@ns) + scalar(@one2one))) ."$one  \n";
+    my $space  = (' ' x  (scalar(@ns) + scalar(@one2one)));
+    foreach my $t (@ns) {
+      my $inner = '--   '. $space ."INNER JOIN $t ON  ";   
+
+      map { $tables .= "$inner  $one.$PK = $t.$_ ) \n" } 
+          grep (/^${one}_$FK$/,
+               (sort(keys(%{$self->{tables}{$t}{cols}}))));
+    }
+
+    foreach my $t (@one2one) { 
+      my $left = '--   '. $space ." LEFT JOIN $t->[1] ON  ";   
+      $tables .= "$left ".  $t->[0] .' = '. $t->[1] .'.'. $PK ." ) \n";
+    }
+
+    @one2one = ();
+    $tables .= "-- LIMIT 500;\n\n";
+    $self->p($buff,$tables);
+  }
+  return $self;
 }
 
 ###
@@ -197,80 +280,65 @@ sub make_table
 #       table defs - currently MySQL & PostgreSQL are supported
 #       for sure w/very generic SQL for everything else
 #       So 'hopefully' it'll 'just work'! (yeah right)
-#
 sub dump_dbschema_tables {
     my($self) = @_;
-
     my %tables = %{$self->{tables}};
-
     my $schema = new DBIx::DBSchema;
     
     # Generic PK column
-    my $pk_id = new DBIx::DBSchema::Column(
-        {
-            name => $self->{rdb}->{PK_NAME},
-            type => 'integer',  # Use DBIx::Sequence to handle PKs
-            null => 'NOT NULL'
-        }
-    );
+    my $pk_id = new DBIx::DBSchema::Column({
+                  name => $self->{rdb}->{PK_NAME},
+                  type => 'integer',  # Use DBIx::Sequence to handle PKs
+                  null => 'NOT NULL'
+                  });
 
     foreach my $table_name (keys %tables) {
-        # Skip the meta-info stuff
-        next if ($table_name eq '__meta__');
+      # Skip the meta-info stuff
+      next if ($table_name eq '__meta__');
 
-        # The table
-        my $table = new DBIx::DBSchema::Table($table_name);
+      # The table
+	  my (@columns,$table);
+      foreach my $col (keys %{$tables{$table_name}{cols}}) {
+	    push @columns,  new DBIx::DBSchema::Column({
+                          name => $col,
+                          type => $tables{$table_name}{cols}{$col}{type},
+                          null => !$tables{$table_name}{cols}{$col}{not_null}
+                          });
+      }
 
-        foreach my $col (keys %{$tables{$table_name}{cols}}) {
-            my $column = new DBIx::DBSchema::Column(
-                {
-                    name => $col,
-                    type => $tables{$table_name}{cols}{$col}{type},
-                    null => !$tables{$table_name}{cols}{$col}{not_null}
-                }
-            );
-            
-            $table->addcolumn($column);
-        }
-
-	      unless ($tables{$table_name}{no_id})
-	      {
-           $table->addcolumn($pk_id);
-           $table->primary_key($self->{rdb}->{PK_NAME});
-	      }
-
-        $schema->addtable($table);
+	  if ((exists($tables{$table_name}{no_id})) and ($tables{$table_name}{no_id} == 1)) {
+        $table = new DBIx::DBSchema::Table({ name => $table_name,
+                                             columns     => \@columns });
+      }
+      else {
+        push @columns, $pk_id;
+        $table = new DBIx::DBSchema::Table({ name => $table_name,
+                                             primary_key => $self->{rdb}->{PK_NAME}, 
+                                             columns     => \@columns });
+      }
+      $schema->addtable($table) if ($table);
     }
 
     #
     # Now create table with table names & attributes mapped to
     #   their 'real' names
     #
-    my $table = 
-      new DBIx::DBSchema::Table($self->{rdb}->{REAL_ELEMENT_NAME_TABLE});
 
     my @sorted_things = sort keys %{$tables{__meta__}};
     my %values;
 
     # Dump real name table & values mapping table
-    my $real_name = new DBIx::DBSchema::Column(
-        {
-            name => 'db_name',
-            type => $self->{rdb}->{TEXT_COLUMN},
-            null => 'NOT NULL'
-        }
-    );
+    my $real_name = new DBIx::DBSchema::Column({
+                      name => 'db_name',
+                      type => $self->{rdb}->{TEXT_COLUMN},
+                      null => 'NOT NULL'
+                      });
 
-    my $xml_name = new DBIx::DBSchema::Column(
-        {
-            name => 'xml_name',
-            type => $self->{rdb}->{TEXT_COLUMN},
-            null => 'NOT NULL'
-        }
-    );
-
-    $table->addcolumn($real_name);
-    $table->addcolumn($xml_name);
+    my $xml_name = new DBIx::DBSchema::Column({
+                      name => 'xml_name',
+                      type => $self->{rdb}->{TEXT_COLUMN},
+                      null => 'NOT NULL'
+                      });
 
     # Set up real values hash
     foreach my $thing (@sorted_things) {
@@ -279,6 +347,10 @@ sub dump_dbschema_tables {
 
         $values{$thing} = $tables{__meta__}{$thing};
     }
+    my $table = new DBIx::DBSchema::Table({ 
+                  name => $self->{rdb}->{REAL_ELEMENT_NAME_TABLE},
+				  columns => [ $real_name, $xml_name ] 
+                  });
 
     $schema->addtable($table);
 
@@ -290,37 +362,39 @@ sub dump_dbschema_tables {
     # Dump link tables table
     #   Store meta-info about 1:N tables in DB itself
     ##
-    $table = new DBIx::DBSchema::Table($self->{rdb}->{LINK_TABLE_NAMES_TABLE});
-    my $one_column = new DBIx::DBSchema::Column(
-        {
-            name => 'one_table',
-            type => $self->{rdb}->{TEXT_COLUMN},
-            null => 'NOT NULL'
-        }
-    );
-    my $many_column = new DBIx::DBSchema::Column(
-        {
-            name => 'many_table',
-            type => $self->{rdb}->{TEXT_COLUMN},
-            null => 'NOT NULL'
-        }
-    );
 
-    $table->addcolumn($one_column);
-    $table->addcolumn($many_column);
-    
+    my $one_column = new DBIx::DBSchema::Column({
+                        name => 'one_table',
+                        type => $self->{rdb}->{TEXT_COLUMN},
+                        null => 'NOT NULL'
+                        });
+    my $many_column = new DBIx::DBSchema::Column({
+                        name => 'many_table',
+                        type => $self->{rdb}->{TEXT_COLUMN},
+                        null => 'NOT NULL'
+                        });
+
+    $table = new DBIx::DBSchema::Table({ 
+                name => $self->{rdb}->{LINK_TABLE_NAMES_TABLE},
+                columns => [ $one_column, $many_column ] 
+                });
     $schema->addtable($table);
    
     # Dump out tables real purty like
-    local($") = undef;
+#    local($") = undef;
+    local($") = '';
     my @sql = map { chomp ; $_.=";\n\n" } $schema->sql($self->{rdb}->{DBH});
     $self->p("@sql\n");
 
     # Dump real element names mappings
+    $self->p( "\n" .'-- Real XML element names mapping'. "\n"
+                   .'---------------------------------'. "\n");
     local($") = ",";
     map { $self->p("INSERT INTO ", $self->{rdb}->{REAL_ELEMENT_NAME_TABLE}," VALUES ('$_','$values{$_}');\n"); } keys %values;
 
-    # Dump 1:N table relationship names
+   # Dump 1:N table relationship names
+     $self->p("\n" .'-- 1:N table relationship names'. "\n"
+                   .'-------------------------------'. "\n");
     foreach my $one (keys %{$self->{one_to_n}}) {
         foreach my $many (keys %{$self->{one_to_n}->{$one}}) {
             my $table_name = "'" . $self->{rdb}->mtn($one) . "'";
@@ -358,6 +432,15 @@ sub make_sequence_tables
     $self->{tables}->{$t1}{no_id} = 1;
 }
 
+# Table added to hold primary key and root table for dumping the XML
+sub make_root_n_pk_table {
+  my $self = shift;
+    $self->{tables}->{$self->{rdb}->{ROOT_TABLE_N_PK_TABLE}}{cols}{'root'}{type} = $self->{rdb}->{TEXT_COLUMN};
+    $self->{tables}->{$self->{rdb}->{ROOT_TABLE_N_PK_TABLE}}{cols}{'pk'}{type} = "integer";
+    $self->{tables}->{$self->{rdb}->{ROOT_TABLE_N_PK_TABLE}}{no_id} = 1;
+  return $self;
+}
+
 #
 # So the game here is to add in the PK of one column
 #	as an FK in the many column
@@ -370,7 +453,11 @@ sub add_in_1_to_n_cols {
 		my $col_to_add = $self->{rdb}->mtn($one . "_" . $self->{rdb}->{FK_NAME});
 
 		$self->{tables}->{$many_table}{cols}{$col_to_add}{type} = 'integer';
-		$self->{tables}->{$many_table}{cols}{$col_to_add}{not_null} = 1;
+        # MySQL allows this, 
+        # SQLite3 does not.
+        # Postgresql does not.
+        # and I do not, well maybe add a constraint after load.
+#	$self->{tables}->{$many_table}{cols}{$col_to_add}{not_null} = 1;
 		}
 	}
 }

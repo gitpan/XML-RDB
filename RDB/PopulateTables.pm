@@ -42,29 +42,22 @@ $VERSION = '1.0';
 # 
 ####
 use strict;
-use XML::DOM;
+# use XML::DOM;
 use DBIx::Recordset;
 use DBIx::Sequence;
 
 sub new {
-  my ($class, $rdb, $xmlfile) = @_;
+  my ($class, $rdb, $doc, $head) = @_;
 
-  my $doc = new XML::DOM::Parser->parsefile($xmlfile) || die "$!";
-  
   #
   # Set up DBIx::Recordset - it doesn't like MySQL
   # 
-  $DBIx::Recordset::FetchsizeWarn = 0;
 
   my $self = bless { 
     rdb => $rdb,
     doc => $doc,
-    head => $doc->getDocumentElement,
-    sequence => new DBIx::Sequence({
-                                      db_dsn => $rdb->{DSN},
-                                      db_user => $rdb->{DB_USERNAME},
-                                      db_pw => $rdb->{DB_PASSWORD},
-                                    }),
+    head => $head,
+    sequence => new DBIx::Sequence({ dbh => $rdb->{DBH} }),
     one_to_n => $rdb->get_one_to_n_db,
   }, $class;
 
@@ -79,12 +72,26 @@ sub go {
 
   # Tell them what they've won...
   my $root_table_name = $self->{rdb}->mtn($self->{head}->getNodeName);
+  
+  # FIXME : store root_table_name and $root_pk for XML unpopulate
+  $self->populate_root_n_pk($root_table_name, $root_pk);
 
-  ($root_table_name, $root_pk);
-  #print "\n\tTo re-create this data back into XML use:\n";
-  #print "\t% perl unpop_tables.pl $root_table_name $root_pk\n\n";
-  #print "\tIf this is an XML Schema and you want fully-specified XML back use:\n";
-  #print "\t% perl unpop_schema.pl $root_pk\n\n";
+  return ($root_table_name, $root_pk);
+}
+
+sub populate_root_n_pk {
+  my $self = shift;
+  my ($root_table_name, $root_pk) = @_;
+  use vars qw(*insert);   # DBIx::Recordset deals with GLOBs
+  *insert = DBIx::Recordset->Setup({
+                            '!DataSource' => $self->{rdb}->{DBH},
+                            '!Table' => $self->{rdb}->{ROOT_TABLE_N_PK_TABLE},
+                                  });
+  $insert->Insert({ root => $root_table_name, pk => $root_pk });
+
+  $insert->Flush(); 
+  DBIx::Recordset::Undef ('*insert');
+  return $self;
 }
 
 # 
@@ -180,14 +187,14 @@ sub populate_table {
 		            #
                 # So we just got the PK of the 'N' table ($sub_table_index)
                 # Later when we get the PK for this table we gotta update
-		            #	that row we just created with that value
-		            # BUT we won't know our PK 
+	            #	that row we just created with that value
+	            # BUT we won't know our PK 
                 #   until we've actually been totally created - see below
                 #   So we'll just remember to do it 4 now...
 		            #
-		            # Store sub table name & it's index so later we can put
-		            #	our PK in there as the FK
-		            my $stn = $self->{rdb}->mtn($sub_table->getNodeName);
+	            # Store sub table name & it's index so later we can put
+	            #	our PK in there as the FK
+	            my $stn = $self->{rdb}->mtn($sub_table->getNodeName);
                 $set_our_pk_in_table{"$stn"}{$sub_table_index} = 1;
             }
             else {
@@ -220,6 +227,7 @@ sub populate_table {
 
     # First generate a unique ID for this table
     my $PK = $self->generate_id($db_table_name);
+    
     $values{$self->{rdb}->{PK_NAME}} = $PK;
 
     # And add record
@@ -234,7 +242,8 @@ sub populate_table {
 
 		        # Set up values
 		        my (%insert);
-		        $insert{id} = $FPK;
+		        $insert{$self->{rdb}->{PK_NAME}} = $FPK;
+#		        $insert{id} = $FPK;
            	$insert{$db_table_name . "_" . $self->{rdb}->{FK_NAME}} = $PK;
 
             # And update the table with our PK in its FK column
@@ -242,11 +251,14 @@ sub populate_table {
 				      (
                 '!DataSource' => $self->{rdb}->{DBH}, 
                 '!Table' => $sub_table_name,
-			        	'!PrimKey' => $self->{rdb}->{PK_NAME}
+	        	'!PrimKey' => $self->{rdb}->{PK_NAME}
               )});
 		    }
 	  }
             
+    $insert->Flush(); 
+    DBIx::Recordset::Undef ('*insert');
+
     # and return our PK - simple enough!
     return $PK
 }

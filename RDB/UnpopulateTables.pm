@@ -47,10 +47,8 @@ use URI::Escape;
 use DBIx::Recordset;
 
 sub new {
-  my ($class, $rdb, $top_table, $pkey, $outfile) = @_;
-
-  # Set up DBIx::Recordset to ingore warnings about MySQL
-  $DBIx::Recordset::FetchsizeWarn = 0;
+#  my ($class, $rdb, $top_table, $pkey, $outfile) = @_;
+  my ($class, $rdb, $outfile) = @_;
 
   # set up FH
   my $fh = new IO::File;
@@ -63,8 +61,8 @@ sub new {
   my $self = bless { 
     rdb => $rdb,
     nodes => {},  # Hash for in-memory traversal of DB
-    top_table => $top_table,
-    pkey => $pkey,
+#    top_table => $top_table,
+#    pkey => $pkey,
     fh => $fh,
   }, $class;
 
@@ -74,8 +72,14 @@ sub new {
 sub go {
   my ($self) = @_;
 
+  my $root_n_pk = $self->{rdb}->get_root_n_pk_db();
+  $self->{top_table} = $root_n_pk->{root};
+  $self->{pkey} = $root_n_pk->{pk};
+
+  my $one_to_n = $self->{rdb}->get_one_to_n_db;
+
   # Create in-memory structure of what's in the DB for eventual output
-  $self->{rdb}->un_populate_table($self->{top_table}, $self->{pkey}, 
+  $self->{rdb}->un_populate_table($one_to_n, $root_n_pk->{root}, $root_n_pk->{pk}, 
                                     $self->{nodes});
 
   # Okay - the whole enchilada is now in memory in %nodes
@@ -86,7 +90,6 @@ sub go {
 ##
 # Now we've got the in-memory data structure - output it in XML
 ##
-use Data::Dumper;
 sub dump_xml_node {
     my($self, $head_name, $head, $tab) = @_;
 

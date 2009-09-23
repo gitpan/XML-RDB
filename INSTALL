@@ -1,0 +1,34 @@
+Install:
+--------
+
+  DSN:
+  Look in the test directory ./t
+  the test will be running a DSN config from there.
+  If you have SQLite, the default should work.
+  Otherwise, put a working DSN pointing to the 
+  'test' datablase.
+
+  MOD DEPENDS:
+  DBI, DBD (Postgresql, SQLite, or MySQL), DBIx, XML::DOM, URI::Escape
+  vars, strict, LWP
+
+The same drill:
+
+  perl -e Makefile.PL
+  make
+  make test
+  make install
+ 
+done...
+
+Forgive me for leaving some stuff out, or send an email with suggestions. 
+CPAN is awesome and am confortably spoiled.
+
+Q:  What is this?
+  Use of uninitialized value in pattern match (m//) at /usr/local/share/perl/5.10.0/DBIx/DBSchema/Table.pm line 381.
+A: DBIx trying to create an index, when none is specified. Doen't do this under general usage, I'm not worried about it.
+
+xml_rdb, the script that interfaces the perl modules XML::RDB. It's creation lead to many modifications to
+XML::RDB. 
+
+

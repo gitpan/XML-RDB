@@ -1,4 +1,8 @@
-Changes
+CHANGES
+COPYING
+CREDITS
+FAQ
+INSTALL
 MANIFEST
 Makefile.PL
 RDB.pm
@@ -7,10 +11,14 @@ RDB/PopulateTables.pm
 RDB/UnpopulateSchema.pm
 RDB/UnpopulateTables.pm
 README
-config.test
+TODO
+dbi_sample.cfg
 t/1.t
-t/mysql_test_config
-t/pg_test_config
-t/schema.good
+t/dbi_mysql_test.cfg
+t/dbi_pg_test.cfg
+t/dbi_sqlite3_test.cfg
+t/expected.test_new.xml
+t/expected.test_schema.sql
 t/test.xml
-t/unpop.good
+xml_rdb
+META.yml                                 Module meta-data (added by MakeMaker)
