@@ -38,7 +38,7 @@ use XML::RDB::MakeTables;
 use XML::RDB::PopulateTables;
 use XML::RDB::UnpopulateTables;
 use XML::RDB::UnpopulateSchema;
-use strict;#  <- DBIx
+use strict;
 
 #####
 #
@@ -51,41 +51,11 @@ use strict;#  <- DBIx
 BEGIN {
         use Exporter ();
         use vars qw($VERSION); # @ISA @EXPORT);
-        $VERSION = "1.2";
+        $VERSION = "1.3";
 #        @ISA = qw(Exporter);
 #        @EXPORT = qw(
-#		     &getHandlers
-#		     &getPattern
 #                    );
-
-#use vars qw(@EXPORT);
-
-# Export some handy constants
-#@EXPORT = qw(REAL_ELEMENT_NAME_TABLE LINK_TABLE_NAMES_TABLE DSN);
-
-# Convenience
-#my $primary_id = PK_NAME;
-#my $foreign_id = FK_NAME;
-
-
       }
-
-# All tables names will being with this string
-use constant TABLE_PREFIX => 'gen';
-
-# Name appended to primary key of every generated table
-use constant PK_NAME => 'id';
-
-# Name appended to foreign key of every generated table
-use constant FK_NAME => 'fk';
-
-# Used to print things out real pretty-like
-use constant TAB => " " x 2;
-# use constant TAB => " " x 4;
-
-# Default width & type of text columns
-use constant TEXT_WIDTH => 50;
-use constant TEXT_COLUMN => 'varchar(' . TEXT_WIDTH . ')';
 
 sub new {
     my ($class, %arg) = @_;
@@ -103,6 +73,13 @@ sub new {
       }
       close(C);
     }
+    elsif ( scalar(keys(%arg)) > 0 ) {
+      $config = \%arg;
+    }
+    else {
+      warn "$class requires a DSN for DBI->connect\n";
+      return undef;
+    }
 
     # setup connection
     my $dbh = DBI->connect(
@@ -116,14 +93,13 @@ sub new {
                       # 1. the method of inserts, and updates
                       # 2. DBIx::Sequence
                       AutoCommit => 1 } 
-            ) || die "yep, here... $!";
+            ) or (( warn $!) and ( return undef));
    
     if ( $config->{DSN} =~ /dbi:sqlite/i) {
-      warn("SQLite detected...setting SQLite PRAGMA: synchronus = OFF; locking_mode = EXCLUSIVE\n") if ($config->{DB_PRINTERR});
-      $dbh->do('PRAGMA synchronous = OFF');
-      $dbh->do('PRAGMA locking_mode = EXCLUSIVE');
-#      $dbh->do('PRAGMA synchronous = OFF');
-#      $dbh->do('PRAGMA locking_mode = NORMAL');
+      warn("SQLite detected...setting SQLite PRAGMA: synchronus = OFF; locking_mode = EXCLUSIVE\n") 
+        if ($config->{DB_PRINTERR});
+      $dbh->do('PRAGMA synchronous = OFF') || warn $dbh->errstr;
+      $dbh->do('PRAGMA locking_mode = EXCLUSIVE') || warn $dbh->errstr;
     }
     
     $DBIx::Recordset::Debug         = $config->{DBIX_DEBUG}         || 0;
@@ -137,14 +113,18 @@ sub new {
                     DBH          => $dbh,
                     TEXT_COLUMN  => ($config->{TEXT_WIDTH})
                                     ? 'varchar('. $config->{TEXT_WIDTH} .')'
-                                    : TEXT_COLUMN,
-                    TEXT_WIDTH   => $config->{TEXT_WIDTH} || TEXT_WIDTH,
-                    TAB          => ($config->{TAB}) ? ' ' x $config->{TAB} : TAB,
-                    PK_NAME      => $config->{PK_NAME} || PK_NAME,
-                    FK_NAME      => $config->{FK_NAME} || FK_NAME,
-                    TABLE_PREFIX => $config->{TABLE_PREFIX} || TABLE_PREFIX,
+                                    : 'varchar(50)',
+                    TEXT_WIDTH   => $config->{TEXT_WIDTH} || 50,
+                    TAB          => ($config->{TAB}) ? ' ' x $config->{TAB} : '  ',
+                    PK_NAME      => $config->{PK_NAME} || 'id',
+                    FK_NAME      => $config->{FK_NAME} || 'fk',
+                    TABLE_PREFIX => $config->{TABLE_PREFIX} || 'gen',
                     DB_USERNAME  => $config->{DB_USERNAME} || '',
                     DB_PASSWORD  => $config->{DB_PASSWORD} || '',
+                    _HEADERS     => (defined $config->{SQL_HEADERS}) 
+                                    ? $config->{SQL_HEADERS} : 1,
+                    _SELECTS     => (defined $config->{SQL_SELECTS}) 
+                                    ? $config->{SQL_SELECTS} : 1,
                     _SQLITE      => ($config->{DSN} =~ /dbi:sqlite/i) ? 1 : 0,
                   }, $class;
 
@@ -171,7 +151,7 @@ sub DESTROY {
 
 sub drop_tables {
   my $self = shift;
-  return warn "Please add DB_CATALOG to your dsn config file.\n"
+  return warn "Please add DB_CATALOG for the dsn supplied for dropping tables.\n"
     unless ( defined $self->{DB_CATALOG} );
   my $dbh = $self->{DBH};
   my ($driver, $dbname) = $self->{DSN} =~ /dbi:(\w+):\w+=(\w+)/i;
@@ -189,7 +169,7 @@ sub drop_tables {
   }
   
   my $d_tables;
-  my $regex = '^'. $self->{TABLE_PREFIX} .'_|dbix_\w+';
+  my $regex = '^'. $self->{TABLE_PREFIX} .'_\w+';
   for my $rel (@{$sth->fetchall_arrayref({})}) {
     if ($rel->{TABLE_NAME} =~ /$regex/o) {
       push(@{ $d_tables }, $rel->{TABLE_NAME});     
@@ -223,7 +203,8 @@ sub _get_xml {
   my $self = shift;
   my $xmlfile = shift;
 
-  if  (($self->{_XMLFILE}) and ($self->{_XMLFILE} eq $xmlfile)) {
+  if  (($self->{_XMLFILE}) and 
+       ((!$xmlfile) or ($self->{_XMLFILE} eq $xmlfile))) {
     undef; 
   }
   elsif ($self->{DOC}) {
@@ -256,14 +237,18 @@ sub populate_tables {
 }
 
 sub unpopulate_tables {
-  my $ut = new XML::RDB::UnpopulateTables(@_);
-  $ut->go;
+  my $self = shift;
+  my $outfile = shift;
+  my $root_n_pk = $self->get_root_n_pk_db();
+  my $ut = new XML::RDB::UnpopulateTables($self,$outfile);
+  $ut->go($root_n_pk->{root}, $root_n_pk->{pk});
 }
 
 sub unpopulate_schema {
   my $us = new XML::RDB::UnpopulateSchema(@_);
   $us->go;
 }
+
 #
 # Blow thru all nodes & find 1:N relationships between them
 #   Need to pass the root of yer XML::DOM tree
@@ -272,11 +257,15 @@ sub unpopulate_schema {
 #   this one - if > 1 then 1:N relationship
 #
 sub find_one_to_n_relationships {
-    my($self, $head, $one_to_n) = @_;
-    my(%saw);
+# NOTE : Replaced the recursive loop with goto's with a @stack 
+    my($self, $head) = @_;
+    my (@stack,%saw,$one_to_n);
+    TOP_REL:
+    my $nodes = [ $head->getChildNodes ];
+    %saw = ();
 
     # Count duplicates
-    grep($saw{$_->getNodeName}++, $head->getChildNodes);
+    grep($saw{$_->getNodeName}++, @{$nodes});
     foreach (keys %saw) {
         next if /#text/;
         next if /#comment/;
@@ -286,20 +275,30 @@ sub find_one_to_n_relationships {
         }
     }
 
+    TOPLESS_REL:
     # And recurse on down the road
-    foreach my $sub_node ($head->getChildNodes) {
-        next if ($sub_node->getNodeType == XML::DOM::TEXT_NODE);
-        $self->find_one_to_n_relationships($sub_node,$one_to_n);
+    while (scalar(@{$nodes})) {
+      my $sub_node =  shift(@{$nodes});
+      next if ($sub_node->getNodeType == XML::DOM::TEXT_NODE);
+      push(@stack, $nodes);
+      $head = $sub_node;
+      goto TOP_REL;
     }
 
-    # Done is Done
-    $one_to_n;
+  if (scalar(@stack) > 0) {
+    $nodes = pop(@stack);
+    goto TOPLESS_REL;
+  }
+
+  # Done is Done
+  return $one_to_n;
 }
 
 #
 # Helper function to dump the 'one_to_n' datastructure out
 #
 sub dump_otn {
+  my $self = shift;
     my($otn, $char) = @_;
     my $ret;
 
@@ -316,8 +315,9 @@ sub dump_otn {
 #   DB table name & adds TABLE_PREFIX
 #
 sub mtn {   
-    my($self, $base) = @_;
-    normalize($self->{TABLE_PREFIX} . "_$base");
+    my($self, $base, $out) = @_;
+    ($out = $self->{TABLE_PREFIX} . "_$base") =~ y/#:\.-/_____/;
+    lc $out;
 }
     
 # Normalize column/table names - No ':' or '-' & all lower case
@@ -325,41 +325,42 @@ sub normalize {
     my($in,$out) = shift;
     
     # Get rid of funny stuff 
-    ($out = $in) =~ s/[#:\.-]/_/g;
+#    ($out = $in) =~ s/[#:\.-]/_/go;
+    ($out = $in) =~ y/#:\.-/_____/;
     lc $out;
 }
+
 #
 # Pulls out root_n_pk data from the DB itself
 #
 sub get_root_n_pk_db {
-  my($self) = @_;
+  my $self = shift;
   my $rt_n_pk;
 
   if ($self->{_SQLITE}) {
     my $sth = $self->{DBH}->prepare('select * from '. $self->{ROOT_TABLE_N_PK_TABLE});
     $sth->execute();
-    while (my $row = $sth->fetch()) {
-       $rt_n_pk = { root => $row->[1],  pk => $row->[0] };    
-    }
+    my $row = $sth->fetch(); 
+    $rt_n_pk = { root => $row->[1],  pk => $row->[0] }
+      if ($row);    
   }
   else {
     use vars qw(*root_n_pk);
     *root_n_pk = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
                                  '!Table' => $self->{ROOT_TABLE_N_PK_TABLE}});
-    foreach my $root (@root_n_pk) {
-        $rt_n_pk = { root => $root->{root}, pk => $root->{pk} };
-    }
-#    DBIx::Recordset->Flush(); 
-    *root_n_pk->Flush(); 
+    my $root;                             
+    $root = $root_n_pk[0] if (@root_n_pk);
+    $rt_n_pk = { root => $root->{root}, pk => $root->{pk} } if ($root);
     DBIx::Recordset::Undef ('*root_n_pk');
   }
   return $rt_n_pk;
 }
+
 #
 # Pulls out one_to_n data structures from the DB itself
 #
 sub get_one_to_n_db {
-  my($self) = @_;
+  my $self = shift;
   my %one_to_n;
 
   if ($self->{_SQLITE}) {
@@ -376,25 +377,52 @@ sub get_one_to_n_db {
     foreach my $links (@link_tables) {
         $one_to_n{$links->{one_table}}{$links->{many_table}} = 1;
     }
-    *link_tables->Flush(); 
+    #    *link_tables->Flush(); 
     DBIx::Recordset::Undef ('*link_tables');
   }
   return \%one_to_n;
 }
+
+sub get_real_element_names_db {
+  my $self = shift;
+  my $names;
+
+  if ($self->{_SQLITE}) {
+    my $sth = $self->{DBH}->prepare('select * from '. $self->{REAL_ELEMENT_NAME_TABLE});
+    $sth->execute();
+    while (my $row = $sth->fetch()) {
+       $names->{$row->[0]} = $row->[1];    
+    }
+  }
+  else {
+    use vars qw(*set);
+    *set = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
+                                    '!Table' => $self->{REAL_ELEMENT_NAME_TABLE}});
+      foreach my $n (@set) {
+          $names->{$n->{db_name}} = $n->{xml_name};
+      }
+      #    *link_tables->Flush(); 
+    DBIx::Recordset::Undef ('*set');
+  }
+  return $names;
+}
+
+
 #
 # Get the corresponding 'xml_name' from this 'db_name'
 #
-sub get_xml_name {
-  my($self, $db_name) = @_;
-    my @set = DBIx::Recordset->Search({
-        '!DataSource' => $self->{DBH},
-        '!Table' => $self->{REAL_ELEMENT_NAME_TABLE},
-        '$where' => 'db_name = ?',
-        '$values' => [ $db_name ],
-      });
+#sub get_xml_name {
+#  my($self, $db_name) = @_;
+#    my @set = DBIx::Recordset->Search({
+#        '!DataSource' => $self->{DBH},
+#        '!Table' => $self->{REAL_ELEMENT_NAME_TABLE},
+#        '$where' => 'db_name = ?',
+#        '$values' => [ $db_name ],
+#      });
+#
+#    $set[0]{xml_name};
+#}
 
-    $set[0]{xml_name};
-}
 #
 # Recursive routine to unpopulate DB into in-memory data structure
 #
@@ -402,10 +430,16 @@ sub get_xml_name {
 #   giant monstrous data in-memory data-structure we've created to
 #   stick this row's values
 #
+
 sub un_populate_table {
     my($self, $one_to_n, $table_name, $id, $put_it_here) = @_;
+    my $match = "_" . $self->{PK_NAME};
+    my(@stack, $schema_names, $jj, $other_table, $fk_field, $links, $kk, $i );
     use vars qw(*schema);   # DBIx::Recordset likes GLOBs, yummy
 
+    TOP_TBL:
+    ( $jj, $other_table, $fk_field, $links, $kk, $i ) = ();
+            
     # This'll get the ball rolling...
     *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
                                        '!Table' => $table_name,
@@ -414,36 +448,48 @@ sub un_populate_table {
     # Any column that ends in '_id' we gotta assume is a 1:1 map
     # Any column that ends in '_value' is text in this element
     # Any column that ends in '_attribute' is an attribute
-    foreach my $col (@{$schema->Names}) {
-        my $val = $schema[0]{$col};
-        my $match = "_" . $self->{PK_NAME};
 
-        if ($col =~ /${match}$/) {
+    $schema_names = $schema->Names;
+
+#    foreach my $col (@{$schema->Names}) {
+    for ($jj = 0; scalar(@{$schema_names}) > $jj; $jj++) {
+        my $col = $schema_names->[$jj];
+        my $val = $schema[0]{$col};
+
+        if ($col =~ /${match}$/o) {
             # 1:1
             next if (!$val);
 
             # Unpopulate sub table since this is a foreign key
-            my $other_table;
-            ($other_table = $col) =~ s/${match}$//;
-            $self->un_populate_table($one_to_n, $other_table, $val, \%{$put_it_here->{$other_table}});
+            my $this_table;
+            ($this_table = $col) =~ s/${match}$//;
+#            $self->un_populate_table($one_to_n, $other_table, $val, \%{$put_it_here->{$other_table}});
+
+            push(@stack, [ $table_name, $id, $put_it_here, $schema_names, $jj, 
+                           $other_table, $fk_field, $links, $kk, $i ]);
+            ($table_name, $id, $put_it_here ) = 
+              ($this_table, $val, \%{$put_it_here->{$this_table}});
+            goto TOP_TBL;
+            TOPLESS_TBL_1to1:
+
             # Put the candle - back
             *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
                                                '!Table' => $table_name,
                                                $self->{PK_NAME} => $id});
 
         }
-        elsif ($col =~ /_value$/) {
+        elsif ($col =~ /_value$/o) {
             # text between tag
             $put_it_here->{value} = $val if (defined $val);
         }
-        elsif ($col =~ /_attribute$/) {
+        elsif ($col =~ /_attribute$/o) {
             # attribute
             $put_it_here->{attribute}{$col} = $val if (defined $val);
         }
         elsif ($col eq $self->{PK_NAME}) {
             # PK - don't do anything
         }
-        elsif ($col =~ /_$self->{FK_NAME}$/ ) {
+        elsif ($col =~ /_$self->{FK_NAME}$/o ) {
             # FK - don't do anything
         }
         else {
@@ -455,10 +501,15 @@ sub un_populate_table {
     # Now get 1:N relationships
     if ($one_to_n->{$table_name}) {
         # Go thru each 'N' relationship table to this one
-        foreach my $link (keys %{$one_to_n->{$table_name}}) {
+
+          $links = [ keys %{$one_to_n->{$table_name}} ];
+
+          for ($kk = 0; scalar(@{$links}) > $kk; $kk++) {
+            my $link = $links->[$kk];
+
             # Look up other PK via our PK (which is an FK in the sub_table)
-            my $other_table = $self->mtn($link);
-    	        my $fk_field = $table_name."_" . $self->{FK_NAME};
+            $other_table = $self->mtn($link);
+    	    $fk_field = $table_name."_" . $self->{FK_NAME};
 
             # Look up matching row in other (linked) table
     	        # Get rows from other table with a $fk_field matching
@@ -466,12 +517,21 @@ sub un_populate_table {
             *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
                                    '!Table' => $other_table,
                                     "$fk_field" => $id});
-            my $i = 0;
+
+            $i = 0;
             while(my $other_pk = $schema[$i]{$self->{PK_NAME}}) {
                 next if (!$other_pk);
                 # use $i in name to keep 'em seperate
                 #   & recursively unpopulate that other table
-                $self->un_populate_table($one_to_n, $other_table, $other_pk, \%{$put_it_here->{$i}{"${other_table}"}});
+#                $self->un_populate_table($one_to_n, $other_table, $other_pk, \%{$put_it_here->{$i}{"${other_table}"}});
+
+                push(@stack, [ $table_name, $id, $put_it_here, $schema_names, $jj, 
+                               $other_table, $fk_field, $links, $kk, $i ]);
+                ($table_name, $id, $put_it_here ) = 
+                  ($other_table, $other_pk, \%{$put_it_here->{$i}{"${other_table}"}});
+      
+                goto TOP_TBL;
+                TOPLESS_TBL_FK:
 
                 # Put The Candle - Back
                 *schema = DBIx::Recordset->Search({'!DataSource'=>$self->{DBH},
@@ -481,9 +541,102 @@ sub un_populate_table {
             }
         }
     }
-#    *schema->Flush(); 
+
+  if (scalar(@stack) > 0) {
+    ( $table_name, $id, $put_it_here, $schema_names, $jj,
+      $other_table, $fk_field, $links, $kk, $i ) = @{pop(@stack)};
+    unless ($other_table) {  goto TOPLESS_TBL_1to1;  }
+                     else {  goto TOPLESS_TBL_FK;    }
+  }
+
     DBIx::Recordset::Undef ('*schema');
 }
+
+
+
+
+#sub un_populate_table {
+#    my($self, $one_to_n, $table_name, $id, $put_it_here) = @_;
+#    use vars qw(*schema);   # DBIx::Recordset likes GLOBs, yummy
+#
+#    # This'll get the ball rolling...
+#    *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
+#                                       '!Table' => $table_name,
+#                                        $self->{PK_NAME} => $id
+#                                        });
+#    # Any column that ends in '_id' we gotta assume is a 1:1 map
+#    # Any column that ends in '_value' is text in this element
+#    # Any column that ends in '_attribute' is an attribute
+#    foreach my $col (@{$schema->Names}) {
+#        my $val = $schema[0]{$col};
+#        my $match = "_" . $self->{PK_NAME};
+#
+#        if ($col =~ /${match}$/) {
+#            # 1:1
+#            next if (!$val);
+#
+#            # Unpopulate sub table since this is a foreign key
+#            my $other_table;
+#            ($other_table = $col) =~ s/${match}$//;
+#            $self->un_populate_table($one_to_n, $other_table, $val, \%{$put_it_here->{$other_table}});
+#            # Put the candle - back
+#            *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
+#                                               '!Table' => $table_name,
+#                                               $self->{PK_NAME} => $id});
+#
+#        }
+#        elsif ($col =~ /_value$/) {
+#            # text between tag
+#            $put_it_here->{value} = $val if (defined $val);
+#        }
+#        elsif ($col =~ /_attribute$/) {
+#            # attribute
+#            $put_it_here->{attribute}{$col} = $val if (defined $val);
+#        }
+#        elsif ($col eq $self->{PK_NAME}) {
+#            # PK - don't do anything
+#        }
+#        elsif ($col =~ /_$self->{FK_NAME}$/ ) {
+#            # FK - don't do anything
+#        }
+#        else {
+#            # Keep us honest
+#            die "I don't know what to do with column name $col = $val!\n";
+#        }
+#    }
+#
+#    # Now get 1:N relationships
+#    if ($one_to_n->{$table_name}) {
+#        # Go thru each 'N' relationship table to this one
+#        foreach my $link (keys %{$one_to_n->{$table_name}}) {
+#            # Look up other PK via our PK (which is an FK in the sub_table)
+#            my $other_table = $self->mtn($link);
+#    	        my $fk_field = $table_name."_" . $self->{FK_NAME};
+#
+#            # Look up matching row in other (linked) table
+#    	        # Get rows from other table with a $fk_field matching
+#    	        #	this one's
+#            *schema = DBIx::Recordset->Search({'!DataSource' => $self->{DBH},
+#                                   '!Table' => $other_table,
+#                                    "$fk_field" => $id});
+#            my $i = 0;
+#            while(my $other_pk = $schema[$i]{$self->{PK_NAME}}) {
+#                next if (!$other_pk);
+#                # use $i in name to keep 'em seperate
+#                #   & recursively unpopulate that other table
+#                $self->un_populate_table($one_to_n, $other_table, $other_pk, \%{$put_it_here->{$i}{"${other_table}"}});
+#
+#                # Put The Candle - Back
+#                *schema = DBIx::Recordset->Search({'!DataSource'=>$self->{DBH},
+#                                   '!Table' => $other_table,
+#                                    "$fk_field" => $id});
+#                $i++;
+#            }
+#        }
+#    }
+##    *schema->Flush(); 
+#    DBIx::Recordset::Undef ('*schema');
+#}
 
 1;
 __END__
@@ -499,7 +652,13 @@ populate, and unpopulate them.  Works with XML Schemas too.
   # Give our DB's DSN & username/password
   my $rdb = new XML::RDB(config_file => 'db_config');
 
-  # Generate RDB Schema
+  # OR
+  # supply new variables
+  # my $rdb = new XML::RDB(DSN => 'dbi:SQLite:dbname=test',
+  #                        DB_CATALOG => 0 );
+
+  # Supply file or url
+  #   Generate RDB Schema
   $rdb->make_tables("my_xml_file.xml", "db_schema_output_file");
 
   # Now load the generated 'db_schema_output_file' into your DB
@@ -508,8 +667,16 @@ populate, and unpopulate them.  Works with XML Schemas too.
   # Now populate our RDB
   $rdb->populate_tables("my_xml_file.xml");
 
+  # OR
+  # undef when rdb has loaded the same XML file
+  # $rdb->populate_tables();
+
   # Your XML file is now in your RDB!!!!  Play as desired & when ready:
   $rdb->unpopulate_tables('new_xml_file.xml'); 
+
+  # OR
+  # undef writes to STDOUT
+  # $rdb->unpopulate_tables();
 
   #Or drop the tableset
   $tables = $rdb->drop_tables;
@@ -518,13 +685,49 @@ populate, and unpopulate them.  Works with XML Schemas too.
   # Disconnect DB, XML::DOM cleanup
   $rdb->done;
 
-Re-vamped the above portion, should see double in speed and less memory consumption with a more manageable interface, Tested with  Postgreql 8.3, SQLite 3.6.16, and MySQL 5.0.51a. Added some convience routines to help close the sale. Fixed the config vars so they work, extended debugging to underlying DBIx and DBI. Undef'd unused DBIx globs, closed XML::DOM::Parser docs, one sigular database handle and doc. Numerous things I've forgotten to mention. Added generation of select statements to view newly loaded data. Added small table holding root table and key, to unload the data with. Added use strict. 
+  +______________________________________________________+
+  |                                                      |
+  |  Table of configuration in 'new',                    |
+  |   same list available by dsn config file.            |
+  |                                                      |
+  |  scalar              default value                   |
+  |  ------------------  -------------                   |
+  |  DSN                 undef                           |
+  |  DB_USERNAME         ''                              |
+  |  DB_PASSWORD         ''                              |
+  |  DB_RAISEERROR       0                               |
+  |  DB_PRINTERROR       0                               |
+  |  DBIX_DEBUG          0                               |
+  |  DBIX_FETCHSIZEWARN  0                               |
+  |  DB_CATALOG          undef                           |
+  |  TEXT_WIDTH          50                              |
+  |  TAB                 2                               |
+  |  PK_NAME             'id'                            |
+  |  FK_NAME             'fk'                            |
+  |  TABLE_PREFIX        'gen'                           |
+  |  SQL_HEADERS         1                               |
+  |  SQL_SELECTS         1                               |
+  |                                                      |
+  |              OR   ( specifing both, the config file  |
+  |                     is read and available defaults   |
+  |                     are supplied. )                  |
+  |                                                      |
+  |  config_file         'dsn config file'               |
+  |                                                      |
+  +______________________________________________________+
 
-TODO : Recursive routines can be optimized.
+
+Re-vamped the above portion, again. A third improvement over 1.2 in speed and memory management on a couple routines.
+  Replaced recursive sub calls with the beloved 'goto'.
+  Added further flexibility to the interface 
+  Added 2 new config vars, SQL_*
+  Removed DBIx::Sequence and related work tables, dbix_*.
+  Tested with  Postgreql 8.3, SQLite 3.6.16, and MySQL 5.0.51a. on perl 5.10
+
+TODO : Recursive routines can be optimized (further).
        Move to LibXML
        Get XSD working, xml newb here.
-       Make the config file optional, through API 
-       Fix the API, 
+       Fix the API, (think most of it works now) 
        Re-write this doc.
 
   XSD IS ON THE BENCH BROKE, interested if you have it working.

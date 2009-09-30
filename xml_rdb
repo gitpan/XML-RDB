@@ -17,12 +17,12 @@ use XML::RDB;
 use Getopt::Std;
 $Getopt::Std::OUTPUT_HELP_VERSION=1;
 
-
+use Benchmark (':all');
 
 ### Constants
 sub VERSION_MESSAGE { print "\nXML::RDB - version ".$XML::RDB::VERSION."\n";return 1;}
 
-sub USAGE { print STDERR <<"USE";
+sub USAGE { print <<"USE";
 xml_rdb
 
   Reads XML, generates DDL, creates tables, loads the XML data to the tables.
@@ -47,6 +47,7 @@ xml_rdb
 
   ( XML generation )
   -n   <file>      Output of tables to a new XML file
+  -n   -           Output of tables to STDOUT
 
   ( experimental crap ) *ie still broken... you have been forewarned.
   -a   <dir>       Archive directory
@@ -71,8 +72,8 @@ sub TEMPLATE { print <<"TEMP";
 #DSN=DBI:mysql:database=test;host=192.168.0.2;port=3306
 #DSN=DBI:Pg:dbname=test;host=192.168.0.2;port=5432
 #DSN=DBI:SQLite:dbname=test
-#DB_USERNAME=ascii
-#DB_PASSWORD=clipperZ
+#DB_USERNAME=
+#DB_PASSWORD=
 
 ###                 Boolean flags 0|1       ###
 
@@ -98,6 +99,10 @@ DBIX_FETCHSIZEWARN=0
 DBIX_DEBUG=0
 
 ###                 XML::RDB specific        ###
+
+# Boolean 0|1
+SQL_SELECTS=0
+SQL_HEADERS=0
 
 ## All tables names will being with this string TABLE_PREFIX . '_'
 TABLE_PREFIX=gen
@@ -207,20 +212,25 @@ sub process() {
       unless ($options{load_tbls}) { 
         $rdb->make_tables($options{xml_file}, 
                           $options{ddl_file});
-        print '  Generated ddl: '. $options{ddl_file} ."\n";
+        print STDERR '  Generated ddl: '. $options{ddl_file} ."\n";
       }
 
       $rdb->create_tables($options{ddl_file}); 
       print '  Created tables from: '. $options{ddl_file} ."\n";
     
       $rdb->populate_tables($options{xml_file});
-      print '  Loaded table data from: '. $options{xml_file} ."\n";
+      print STDERR '  Loaded table data from: '. $options{xml_file} ."\n";
     }
 
     # Create XML 
     if ($options{new_xml}) {
-      $rdb->unpopulate_tables($options{new_xml});
-      print '  Created new XML:  '. $options{new_xml} ."\n";
+      if ($options{new_xml} eq '-') {
+        $rdb->unpopulate_tables(undef);
+      }
+      else {
+        $rdb->unpopulate_tables($options{new_xml});
+        print STDERR '  Created new XML:  '. $options{new_xml} ."\n";
+      }
       drop_tables($rdb) if ($options{drop_tbls}-- == 1);
     }   
 
@@ -258,8 +268,8 @@ sub process() {
 sub drop_tables ($) {
   my $rdb = shift;
   my $tables = $rdb->drop_tables();
-  print ("  Dropped tables ...\n"); 
-  map { print "    $_\n" } @{$tables};
+  print STDERR ("  Dropped tables ...\n"); 
+  map { print STDERR "    $_\n" } @{$tables};
 return $errcode;
 }
 
@@ -314,6 +324,7 @@ Depend: xml_rdb as a perl script depends on XML::RDB, XML::DOM, DBIx, DBI for th
 
   ( XML generation )
   -n   <file>      Output of tables to a new XML file
+  -n   -           Output of tables to STDOUT
 
   ( experimental crap ) *ie still broken... you have been forewarned.
   -a   <dir>       Archive directory

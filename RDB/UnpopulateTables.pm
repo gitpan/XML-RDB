@@ -34,7 +34,7 @@
 
 package XML::RDB::UnpopulateTables;
 use vars qw($VERSION);
-$VERSION = '1.0';
+$VERSION = '1.2';
 
 #####
 #
@@ -47,7 +47,6 @@ use URI::Escape;
 use DBIx::Recordset;
 
 sub new {
-#  my ($class, $rdb, $top_table, $pkey, $outfile) = @_;
   my ($class, $rdb, $outfile) = @_;
 
   # set up FH
@@ -61,95 +60,183 @@ sub new {
   my $self = bless { 
     rdb => $rdb,
     nodes => {},  # Hash for in-memory traversal of DB
-#    top_table => $top_table,
-#    pkey => $pkey,
     fh => $fh,
   }, $class;
 
   $self;
 }
 
+sub DESTROY { my $self = shift; $self->{fh}->close };
+
 sub go {
-  my ($self) = @_;
-
-  my $root_n_pk = $self->{rdb}->get_root_n_pk_db();
-  $self->{top_table} = $root_n_pk->{root};
-  $self->{pkey} = $root_n_pk->{pk};
-
+  my ($self,$root_table, $pkey) = @_;
   my $one_to_n = $self->{rdb}->get_one_to_n_db;
+  $self->{_element_names} = $self->{rdb}->get_real_element_names_db;
 
   # Create in-memory structure of what's in the DB for eventual output
-  $self->{rdb}->un_populate_table($one_to_n, $root_n_pk->{root}, $root_n_pk->{pk}, 
+  $self->{rdb}->un_populate_table($one_to_n, $root_table, $pkey, 
                                     $self->{nodes});
 
   # Okay - the whole enchilada is now in memory in %nodes
   #   dump that bad boy into XML... output goes to STDOUT
-  $self->dump_xml_node($self->{top_table}, $self->{nodes}, 0);
+  $self->_dump_xml_node($root_table, $self->{nodes}, 0);
+  return $self;
 }
 
 ##
 # Now we've got the in-memory data structure - output it in XML
 ##
-sub dump_xml_node {
+sub _dump_xml_node {
+    # NOTE : Replaced the recursive sub loop with goto's & lifo @stack,
     my($self, $head_name, $head, $tab) = @_;
-
+    my (@stack, $keys, $key, $printed_value, $real_name, $head_keys );
+    my $rdb = $self->{rdb};
     my $fh = $self->{fh};
 
-    my $real_name = $self->{rdb}->get_xml_name($head_name);
-
+    TOP_XML:
+    ( $keys, $key, $printed_value, $real_name, $head_keys ) = 
+        ( [ keys %$head ], undef,  0, $self->{_element_names}{$head_name}, undef );
+    
     # Make it pretty
-    print $fh $self->{rdb}->{TAB} x $tab;
-
-    # Element name
-    print $fh "<$real_name";
+    print $fh $rdb->{TAB} x $tab, '<', $real_name;
 
     # Dump attributes if there are any of 'em
     # Just blow thru 'em all & dump 'em in 'key="value"' form
     if (my $attr_ref = $head->{attribute}) {
-            foreach my $attr_key (keys %{$attr_ref}) {
-                my $real_attr_name = $self->{rdb}->get_xml_name($attr_key);
-                print $fh " $real_attr_name=\"",$attr_ref->{$attr_key},"\"";
-            }
+      foreach my $attr_key (keys %{$attr_ref}) {
+        my $real_attr_name = $self->{_element_names}{$attr_key};
+        print $fh " $real_attr_name=\"",$attr_ref->{$attr_key},"\"";
+      }
     }
-
-    print $fh ">";
+    print $fh '>';
 
     # Keep track if we printed any text in this element
-    my $printed_value = 0;
-
+    
     # Go thru each sub-element...
-    foreach my $key (keys %$head) {
-        # Already did these
-        next if ($key eq 'attribute');
+    while (scalar(@{$keys})) {
+      $key = shift @{$keys};
 
-        if ($key eq 'value') {
-            my $val = $head->{$key} if (defined $head->{$key});
-            if (defined $val && $val ne 'present') {
-                # Escape delicate values - text within tags
-                print $fh uri_escape($val, "&<>");
-                $printed_value++;
-            }
-            next;
-        }
+      # Already did these
+      next if ($key eq 'attribute');
 
-        print $fh "\n";
+      if ($key eq 'value') {
+        my $val = $head->{$key} if (defined $head->{$key});
+        if (defined $val && $val ne 'present') {
+            # Escape delicate values - text within tags
+            print $fh uri_escape($val, "&<>");
+            $printed_value++;
+        }
+        next;
+      }
 
-        if ($key =~ /^\d+$/) {
-            # 1:N relationship
-            # We need to 'skip' over the number & dump the references within...
-            foreach my $multiple_node (keys %{$head->{$key}}) {
-                $self->dump_xml_node($multiple_node, $head->{$key}{$multiple_node}, $tab+1);
-            }
+      print $fh "\n";
+
+      if ($key =~ /^\d+$/o) {
+        # 1:N relationship
+        $head_keys = [ keys %{$head->{$key}} ];
+
+        # We need to 'skip' over the number & dump the references within...
+        while (scalar(@{$head_keys})) { 
+          my $multiple_node = shift @{$head_keys};
+#          $self->_dump_xml_node($multiple_node, $head->{$key}{$multiple_node}, $tab+1);
+
+          push(@stack, [ $head_name, $head, $keys, $key, 
+                         $tab, $printed_value, $real_name, $head_keys ]);
+          ($head_name, $head, $tab ) = ($multiple_node, 
+                                        $head->{$key}{$multiple_node}, 
+                                        $tab+1);
+          goto TOP_XML;
+          TOPLESS_XML_Multi:
         }
-        else {
-            # Plain ond 1:N relationship
-            $self->dump_xml_node($key, $head->{$key}, $tab+1);
-        }
+      }
+      else {
+        # Plain ond 1:N relationship
+#        $self->_dump_xml_node($key, $head->{$key}, $tab+1);
+
+        push(@stack, [ $head_name, $head, $keys, $key, $tab, 
+                       $printed_value, $real_name, $head_keys  ]);
+        ($head_name, $head, $tab ) = ($key, $head->{$key}, $tab+1);
+        goto TOP_XML;
+        TOPLESS_XML_Relate:
+      }
     }
 
     # Output closing tag
-    print $fh $self->{rdb}->{TAB} x $tab unless ($printed_value);
+    print $fh $rdb->{TAB} x $tab unless ($printed_value);
     print $fh "</$real_name>\n";
+
+  if (scalar(@stack) > 0) {
+    ($head_name, $head, $keys, $key, $tab, $printed_value, 
+     $real_name, $head_keys ) = @{pop(@stack)};
+
+    if (ref $head_keys) {  goto TOPLESS_XML_Multi;  }
+                   else {  goto TOPLESS_XML_Relate; }
+  }
+    
 }
+
+
+# sub _dump_xml_node {
+#     my($self, $head_name, $head, $tab) = @_;
+#     my $rdb = $self->{rdb};
+#     my $fh = $self->{fh};
+# 
+#     
+#     my $real_name = $self->{_element_names}{$head_name};
+# 
+#     # Make it pretty
+#     print $fh $rdb->{TAB} x $tab;
+# 
+#     # Element name
+#     print $fh "<$real_name";
+# 
+#     # Dump attributes if there are any of 'em
+#     # Just blow thru 'em all & dump 'em in 'key="value"' form
+#     if (my $attr_ref = $head->{attribute}) {
+#       foreach my $attr_key (keys %{$attr_ref}) {
+#         my $real_attr_name = $self->{_element_names}{$attr_key};
+#         print $fh " $real_attr_name=\"",$attr_ref->{$attr_key},"\"";
+#       }
+#     }
+# 
+#     print $fh ">";
+# 
+#     # Keep track if we printed any text in this element
+#     my $printed_value = 0;
+# 
+#     # Go thru each sub-element...
+#     foreach my $key (keys %$head) {
+#       # Already did these
+#       next if ($key eq 'attribute');
+# 
+#       if ($key eq 'value') {
+#         my $val = $head->{$key} if (defined $head->{$key});
+#         if (defined $val && $val ne 'present') {
+#             # Escape delicate values - text within tags
+#             print $fh uri_escape($val, "&<>");
+#             $printed_value++;
+#         }
+#         next;
+#       }
+# 
+#       print $fh "\n";
+# 
+#       if ($key =~ /^\d+$/) {
+#         # 1:N relationship
+#         # We need to 'skip' over the number & dump the references within...
+#         foreach my $multiple_node (keys %{$head->{$key}}) {
+#           $self->_dump_xml_node($multiple_node, $head->{$key}{$multiple_node}, $tab+1);
+#         }
+#       }
+#       else {
+#         # Plain ond 1:N relationship
+#         $self->_dump_xml_node($key, $head->{$key}, $tab+1);
+#       }
+#     }
+# 
+#     # Output closing tag
+#     print $fh $rdb->{TAB} x $tab unless ($printed_value);
+#     print $fh "</$real_name>\n";
+# }
 
 1;

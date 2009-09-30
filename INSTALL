@@ -3,11 +3,12 @@ Install:
 
   DSN:
   Look in the test directory ./t
-  the test will be running a DSN config from there.
+  the test will be running all DSN configs from there.
   If you have SQLite, the default should work.
-  Otherwise, put a working DSN pointing to the 
-  'test' datablase.
-
+  SQLite, Pg, and mysql DBD drivers with a functional
+  'test' database. So all test will fail without
+  DBD drivers installed and functioning. 
+ 
   MOD DEPENDS:
   DBI, DBD (Postgresql, SQLite, or MySQL), DBIx, XML::DOM, URI::Escape
   vars, strict, LWP
@@ -24,9 +25,16 @@ done...
 Forgive me for leaving some stuff out, or send an email with suggestions. 
 CPAN is awesome and am confortably spoiled.
 
+
+In 'make test';
+
 Q:  What is this?
   Use of uninitialized value in pattern match (m//) at /usr/local/share/perl/5.10.0/DBIx/DBSchema/Table.pm line 381.
 A: DBIx trying to create an index, when none is specified. Doen't do this under general usage, I'm not worried about it.
+
+Q:  What is this?
+  NOTICE:  CREATE TABLE / PRIMARY KEY will create implicit index "gen_street_pkey" for table "gen_street"
+A; DBD:Pg creating your primary key!
 
 xml_rdb, the script that interfaces the perl modules XML::RDB. It's creation lead to many modifications to
 XML::RDB. 
